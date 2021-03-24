@@ -36,19 +36,30 @@ def gather_partitions(C, dP, N):
             ans[p.seq//C.procs].extend(p)
     return ans
 
+def send_chunks(comm, lst, dst, tag, max_elems=100000):
+    for i,n in enumerate(range(0, len(lst), max_elems)):
+        m = min(n+max_elems, len(lst))
+        comm.send(lst[n:m], dest=dst, tag=tag+100*i)
+
+def recv_chunks(comm, lst, off, src, tag, max_elems=100000):
+    for i,n in enumerate(range(off, len(lst), max_elems)):
+        m = min(n+max_elems, len(lst))
+        lst[n:m] = comm.recv(source=src, tag=tag+100*i)
+
 # Use point-to-point send/receives to shuffle list elements between ranks.
 #
 # C : Context
 # sends : [ [(i,j,n)] ] = list of sends at ea. step
 # lst : list-like object to index and move around (we add and remove from the end)
-def do_sends(C, sends, lst):
+def do_sends(C, sends, lst, max_elems=100000):
     for s, sno in enumerate(sends):
         for i,j,n in sno:
             if i == C.rank:
-                C.comm.send(lst[-n:], dest=j, tag=s)
+                send_chunks(C.comm, lst[-n:], j, s, max_elems)
                 del lst[-n:]
             elif j == C.rank:
-                lst.extend( C.comm.recv(source=i, tag=s) )
+                lst.extend( [0]*n )
+                recv_chunks(C.comm, lst, len(lst)-n, i, s, max_elems)
 
 class Partition(list):
     def __init__(self, seq, items):
@@ -145,6 +156,21 @@ class RDD:
             return ans
         return concat(ans)
 
+    # Turn each element of each partition into its own partition.
+    # The old elements are the names of the parquet files to read.
+    def readParquets(self, idx=True):
+        def read(fname):
+            df = pd.read_parquet(fname)
+            if idx: # capture the index as a column
+                df.reset_index(level=0, inplace=True)
+            i = abs(hash(name))
+            return Partition(i, [tuple(r) for r in df.to_numpy()])
+        P = []
+        for p in self.P:
+            for name in p:
+                P.append(read(name))
+        return RDD(self.C, P)
+
 # create a global context
 # The context holds its RDDs
 class Context:
@@ -156,84 +182,14 @@ class Context:
         self.procs = self.comm.Get_size()
 
     # Append an RDD to the set of RDDs managed by this context.
+    #  Why would we care about saving these things
+    #  -- isn't that the user's responsibility?
     def append(self, rdd):
-        self.rdds.append(rdd)
-
-    # Create an RDD from a set of n parquets
-    def fromParquets(self, scheme, n):
-        def read(i):
-            df = pd.read_parquet(scheme%i)
-            return Partition(i, [tuple(r) for r in df.to_numpy()])
-        x = [read(i) for i in range(self.rank, n, self.procs)]
-        return RDD(self, x)
+        #self.rdds.append(rdd)
+        pass
 
     # Create an RDD from a sequence of numbers
     # uses a single partition per rank.
     def iterates(self, n):
         return RDD(self, [Partition(self.rank, [i for i in range(self.rank, n, self.procs)])])
 
-def printif(C, x):
-    if C.rank == 0:
-        print(x)
-
-def test_iterate(N):
-    C = Context()
-    r = C.iterates(N).map(lambda u: (u+12.9,1,2))
-    ans = r.getNumPartitions()
-    if C.rank == 0: assert ans == C.procs
-
-    pl = r.foreachPartition(len)
-    assert isinstance(pl, RDD)
-
-    ans = pl.getNumPartitions()
-    if C.rank == 0: assert ans == C.procs
-    ans = pl.collect()
-    if C.rank == 0: assert isinstance(ans, list)
-    if C.rank == 0: assert len(ans) == C.procs
-
-def test_parquet(M = 20):
-    C = Context()
-
-    z = C.fromParquets("data.%d.pq", M)
-    ans = z.getNumPartitions()
-    if C.rank == 0: assert ans == M
-    ans = z.foreachPartition(len).collect()
-    if C.rank == 0: assert len(ans) == M
-    if C.rank == 0: assert np.all(np.array(ans) == ans[0])
-
-def test_repartition(N, M):
-    C = Context()
-    r = C.iterates(N).repartition(M)
-    ans = r.getNumPartitions()
-    if C.rank == 0: assert ans == M
-    pl = r.foreachPartition(len)
-    assert isinstance(pl, RDD)
-    u = pl.collect()
-    if C.rank == 0:
-        u = np.array(u)
-        assert np.all(u >= N//M)
-        assert u.sum() == N
-
-def test_byKey(N, M):
-    C = Context()
-    # sort by keys themselves
-    r = C.iterates(N).byKey(lambda x: x//5, M)
-    assert isinstance(r, RDD)
-
-    ans = r.getNumPartitions()
-    if C.rank == 0: assert ans == M
-    pl = r.foreachPartition( lambda p: print(p.seq, [x for x in p]) )
-
-def main():
-    test_iterate(100)
-    test_parquet()
-    test_repartition(99, 2)
-    test_repartition(100, 20)
-    test_repartition(101, 10)
-    test_repartition(3, 7)
-    test_repartition(72, 128)
-
-    test_byKey(100, 20)
-
-if __name__ == "__main__":
-    main()
