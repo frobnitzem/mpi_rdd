@@ -26,7 +26,7 @@ def test_parquet(M = 20):
 
         C = Context()
 
-        z = C.iterates(M).map(lambda i: fmt%i).readParquets(False)
+        z = C.iterates(M).map(lambda i: fmt%i).partitionFrom(readParquet)
         ans = z.getNumPartitions()
         if C.rank == 0: assert ans == M
         ans = z.foreachPartition(len).collect()

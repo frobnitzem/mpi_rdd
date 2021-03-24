@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import numpy as np
-import pandas as pd
 from fill import fill
 
 def concat(ans):
@@ -158,17 +157,11 @@ class RDD:
 
     # Turn each element of each partition into its own partition.
     # The old elements are the names of the parquet files to read.
-    def readParquets(self, idx=True):
-        def read(fname):
-            df = pd.read_parquet(fname)
-            if idx: # capture the index as a column
-                df.reset_index(level=0, inplace=True)
-            i = abs(hash(name))
-            return Partition(i, [tuple(r) for r in df.to_numpy()])
+    def partitionFrom(self, f):
         P = []
         for p in self.P:
-            for name in p:
-                P.append(read(name))
+            for x in p:
+                P.append(f(x))
         return RDD(self.C, P)
 
 # create a global context
@@ -192,4 +185,15 @@ class Context:
     # uses a single partition per rank.
     def iterates(self, n):
         return RDD(self, [Partition(self.rank, [i for i in range(self.rank, n, self.procs)])])
+
+########### helpers for pandas ###############
+import pandas as pd
+
+# create a partition from a file
+def readParquet(fname, idx=True):
+    df = pd.read_parquet(fname)
+    if idx: # capture the index as a column
+        df.reset_index(level=0, inplace=True)
+    i = abs(hash(fname))
+    return Partition(i, [tuple(r) for r in df.to_numpy()])
 
