@@ -65,7 +65,7 @@ class Partition(list):
         self.seq = seq
         list.__init__(self, items)
     def filter(self, f):
-        return Partition(filter(f, self.seq))
+        return Partition(self.seq, filter(f, self))
     def map(self, f):
         return Partition(self.seq, [f(x) for x in self])
     def flatMap(self, f):
