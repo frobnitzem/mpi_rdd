@@ -1,4 +1,9 @@
-# Implement nearest fill rule
+# Create a schedule of transfers to accomplish leveling.
+# fill() takes a list of "surplus" items for each rank.
+# These surpluses must sum to zero.
+#
+# It then provides (src, dst, count) pairs for item transfer.
+#
 
 import numpy as np
 
@@ -70,6 +75,8 @@ def check_fill(delta, sends):
             x[j] += n
     assert np.all(x == 0), "Improper ending state"
 
+# Test that the fill function is providing correct
+# schedules by .
 def test_fill():
     ans = fill(np.array([0])) # test trivial case
     print(ans)
@@ -81,14 +88,29 @@ def test_fill():
     print(sends)
     check_fill(delta, sends)
 
+    schedules = 0
+    nsends = 0.0
+    ranks = 0.0
+    imbalance = 0.0
+    sent = 0.0
     for M in range(2,100,3): # range of sizes
         for j in range(10): # tests per size
             delta = np.random.randint(-10,11, size=M)
             v = np.random.randint(M)
-            delta[v] -= delta.sum() # deposit excess
+            delta[v] -= delta.sum() # ensure sum(delta) == 0
 
             sends = fill( delta )
             check_fill(delta, sends)
+
+            # check some figures of merit for the schedule
+            sent += sum(sum(l[2] for l in lev) for lev in sends) # sent data
+            imbalance += sum(d for d in delta if d > 0) # actual imbalance
+            nsends += sum(len(lev) for lev in sends) # number of p2p sends
+            ranks += M # participating ranks
+            schedules += 1
+
+    print("Average data sent / imbalance = %f"%(sent / imbalance))
+    print("Average #p2p sends / ranks = %f"%(nsends / ranks))
 
 if __name__=="__main__":
     test_fill()
